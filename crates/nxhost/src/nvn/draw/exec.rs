@@ -199,7 +199,7 @@ impl Replay<'_> {
                 .and_then(|(k, t, tb)| self.e.textures.view(k, &tb, &t, kind))
                 .filter(|t| !kind.is_depth() || gfx_is_depth(t.0.pixelFormat()))
                 .unwrap_or_else(|| self.e.textures.dummy(kind));
-            let sampler = self.e.textures.sampler(sb.as_ref());
+            let sampler = self.e.textures.sampler(sb.as_ref(), &tex.0);
             let slot = c.iface.samplers.get(&b).copied().unwrap_or(0);
             bound.push((b, tex, slot, sampler));
         }
