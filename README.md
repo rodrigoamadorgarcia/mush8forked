@@ -104,7 +104,7 @@ Any phone's browser can be a controller too, no app needed (Android included) : 
 Add the page to the home screen (Share → Add to Home Screen) to get rid of the address bar
 
 ## Mods
-Mush8 loads mods from a `mods` folder in the same folder as your game files. This works on macOS only for now. Each mod is a folder inside `mods`, and it must contain a `romfs` folder, an `exefs` folder, or both. Mush8 ignores other folders. In the launcher, use Game data → Mods → Customize to turn each mod on or off.
+Mush8 loads mods from a `mods` folder in the same folder as your game files. This works on macOS only for now. Each mod is a folder inside `mods`, and it must contain a `romfs` folder, an `exefs` folder, or both. Mush8 ignores other folders. In the launcher, use Game data → Mods → Customize to turn each mod on or off. Drag a mod up or down in that list to change its order. New mods go to the bottom
 
 ```
 mods/

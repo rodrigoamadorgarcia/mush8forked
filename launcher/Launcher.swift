@@ -143,6 +143,7 @@ final class Settings: ObservableObject {
     @Published var lodBias = 0.0
     @Published var textureFilter = "game"
     @Published var disabledMods: [String] = []
+    @Published var modOrder: [String] = []
     private var autosave: AnyCancellable?
 
     init() {
@@ -179,11 +180,24 @@ final class Settings: ObservableObject {
         lodBias = j["lod_bias"] as? Double ?? 0.0
         textureFilter = j["texture_filter"] as? String ?? (j["trilinear"] as? Bool == true ? "trilinear" : "game")
         disabledMods = j["disabled_mods"] as? [String] ?? []
+        modOrder = j["mod_order"] as? [String] ?? []
     }
 
     var folderURL: URL { URL(fileURLWithPath: folder) }
 
-    var enabledMods: [Mod] { installedMods(in: folderURL).filter { !disabledMods.contains($0.name) } }
+    var mods: [Mod] {
+        let all = installedMods(in: folderURL)
+        let order = modOrder
+        let rank = { (m: Mod) in order.firstIndex(of: m.name) ?? Int.max }
+        return all.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+    }
+    var enabledMods: [Mod] { mods.filter { !disabledMods.contains($0.name) } }
+
+    func moveMods(from source: IndexSet, to destination: Int) {
+        var names = mods.map(\.name)
+        names.move(fromOffsets: source, toOffset: destination)
+        modOrder = names
+    }
 
     var codePatches: [String] { enabledMods.flatMap(\.patches) }
 
@@ -195,7 +209,7 @@ final class Settings: ObservableObject {
             "handheld": handheld, "uhd": uhd, "dynamic_resolution": dynamicResolution, "split60": split60, "phone_pads": phonePads, "browser_pads": browserPads,
             "aspect": fillScreen ? "fill" : "16:9", "hud": hudAtEdges ? "edges" : "center", "hud_scale": hudScale,
             "anisotropy": anisotropy, "lod_bias": lodBias, "texture_filter": textureFilter,
-            "disabled_mods": disabledMods,
+            "disabled_mods": disabledMods, "mod_order": modOrder,
         ]
         try? FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
         if let data = try? JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys]) {
@@ -257,7 +271,7 @@ func checks(_ s: Settings) -> [Check] {
     let has = { (p: String) in fm.fileExists(atPath: f.appendingPathComponent(p).path) }
     let shaderIndex = f.appendingPathComponent("work/shader_cache.noindex/heap-segments-v2/index.tsv").path
     let shaders = (try? fm.attributesOfItem(atPath: shaderIndex)[.size] as? Int) ?? nil
-    let mods = installedMods(in: f)
+    let mods = s.mods
     let on = mods.filter { !s.disabledMods.contains($0.name) }.count
     return [
         Check(id: "Base Game", ok: has(s.base), detail: has(s.base) ? s.base : "not found"),
@@ -712,29 +726,33 @@ struct ModsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let mods = installedMods(in: s.folderURL)
-        VStack(spacing: 12) {
-            Form {
-                Section {
-                    ForEach(mods) { m in
-                        Toggle(isOn: Binding(get: { !s.disabledMods.contains(m.name) }, set: { on in
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Mods").font(.headline)
+            List {
+                ForEach(s.mods) { m in
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(m.name)
+                            Text(m.summary).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { !s.disabledMods.contains(m.name) }, set: { on in
                             s.disabledMods.removeAll { $0 == m.name }
                             if !on { s.disabledMods.append(m.name) }
-                        })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.name)
-                                Text(m.summary).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
+                        }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                     }
-                } header: {
-                    Text("Mods")
-                } footer: {
-                    Text("Mods apply from top to bottom, so a lower mod wins when two mods change the same file. Code patches apply the next time you Prepare.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    .frame(height: 40)
                 }
+                .onMove { from, to in withAnimation { s.moveMods(from: from, to: to) } }
             }
-            .formStyle(.grouped)
+            .environment(\.defaultMinListRowHeight, 48)
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+            Text("Drag a mod to change the order. Mods apply from top to bottom, so a lower mod wins when two mods change the same file. Code patches apply the next time you Prepare.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Show in Finder") { NSWorkspace.shared.open(s.folderURL.appendingPathComponent("mods")) }
                 Spacer()
