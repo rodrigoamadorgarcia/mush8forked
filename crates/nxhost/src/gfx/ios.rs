@@ -37,6 +37,20 @@ pub fn wait_foreground() {
     });
 }
 
+pub fn request_high_refresh() {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Relaxed) {
+        return;
+    }
+    dispatch2::DispatchQueue::main().exec_async(|| {
+        let Some(view) = UI.with(|ui| ui.borrow().as_ref().map(|ui| ui.metal.clone())) else { return };
+        let link = unsafe { objc2_quartz_core::CADisplayLink::displayLinkWithTarget_selector(&view, objc2::sel!(nxDisplayFrame:)) };
+        link.setPreferredFrameRateRange(objc2_quartz_core::CAFrameRateRange { minimum: 80.0, maximum: 120.0, preferred: 120.0 });
+        unsafe { link.addToRunLoop_forMode(&objc2_foundation::NSRunLoop::mainRunLoop(), objc2_foundation::NSRunLoopCommonModes) };
+        std::mem::forget(link);
+    });
+}
+
 pub(super) fn panel_hosts() -> Vec<(Retained<UIView>, bool)> {
     UI.with(|ui| {
         let ui = ui.borrow();
@@ -102,6 +116,9 @@ define_class!(
         fn layer_class() -> &'static AnyClass {
             CAMetalLayer::class()
         }
+
+        #[unsafe(method(nxDisplayFrame:))]
+        fn display_frame(&self, _link: &NSObject) {}
 
         #[unsafe(method(layoutSubviews))]
         fn layout_subviews(&self) {
@@ -221,6 +238,7 @@ fn connect(scene: &UIWindowScene, mtm: MainThreadMarker) {
     let frame = UICoordinateSpace::bounds(&*window);
     let (metal, layer) = metal_view(scene, &window, mtm);
     let _ = LAYER.set(Shared(layer));
+    super::MAX_FPS.store(scene.screen().maximumFramesPerSecond() as u32, Relaxed);
     metal.setAutoresizingMask(UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight);
 
     let root = UIView::initWithFrame(UIView::alloc(mtm), frame);
