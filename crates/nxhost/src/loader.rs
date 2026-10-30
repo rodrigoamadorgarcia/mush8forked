@@ -199,6 +199,7 @@ pub fn load(dir: &Path, names: &[&str], hle: &HashMap<&str, u64>) -> Result<Vec<
             }
             *((kp + keypage::SPLIT_DIV as u64) as *mut u8) = split_div;
             *((kp + keypage::ASPECT as u64) as *mut f32) = crate::aspect::stretch() as f32;
+            *((kp + keypage::DYNRES as u64) as *mut u8) = dynamic_resolution() as u8;
         }
         let text_end = align_up(m.text, PAGE);
         let data_start = align_down(m.data.0, PAGE);
@@ -220,9 +221,10 @@ pub fn load(dir: &Path, names: &[&str], hle: &HashMap<&str, u64>) -> Result<Vec<
 }
 
 fn display_config() -> [(u32, u64); 5] {
-    let (size, pool, render, root, os) = match crate::services::vi::docked_height() {
-        2160 => (3840 | 2160 << 32, 0x1600_0000, 0x3000_0000, 0xE050_0000, crate::services::vi::UHD_HEAP),
-        1440 => (2560 | 1440 << 32, 0xA00_0000, 0x1900_0000, 0xBE50_0000, crate::services::vi::QHD_HEAP),
+    use crate::services::vi::{Output, QHD_HEAP, UHD_HEAP, output};
+    let (size, pool, render, root, os) = match output() {
+        Output::Uhd => (3840 | 2160 << 32, 0x1600_0000, 0x3000_0000, 0xE050_0000, UHD_HEAP),
+        Output::Qhd => (2560 | 1440 << 32, 0xA00_0000, 0x1900_0000, 0xBE50_0000, QHD_HEAP),
         _ => (1920 | 1080 << 32, 0x580_0000, 0x1000_0000, 0xB050_0000, 0xC1C0_0000),
     };
     [
@@ -236,6 +238,10 @@ fn display_config() -> [(u32, u64); 5] {
 
 fn split_div() -> u8 {
     if std::env::var("NX_SPLIT60").is_ok_and(|v| v == "1") { u8::MAX } else { 2 }
+}
+
+fn dynamic_resolution() -> bool {
+    std::env::var("NX_DYNRES").map_or(true, |v| v != "0")
 }
 
 fn net_mode() -> u8 {

@@ -23,32 +23,63 @@ pub fn docked() -> bool {
     *D
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Output {
+    Handheld,
+    Full,
+    Qhd,
+    Uhd,
+}
+
 pub const UHD_HEAP: u64 = 0xFFE0_0000;
 pub const QHD_HEAP: u64 = 0xD000_0000;
 
-pub fn docked_height() -> u32 {
-    static H: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| {
-        let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
-        let (height, heap) = if on("NX_4K") {
-            (2160, UHD_HEAP)
-        } else if on("NX_1440P") {
-            (1440, QHD_HEAP)
-        } else {
-            return 1080;
-        };
-        let fits = crate::kernel::aspace().layout.heap_size >= heap && crate::gfx::max_buffer_len() >= heap;
-        if !fits {
-            eprintln!("[vi] {height}p needs a {heap:#x}-byte guest heap the GPU can map: staying at 1080p");
-            return 1080;
+pub fn output() -> Output {
+    static O: std::sync::LazyLock<Output> = std::sync::LazyLock::new(|| {
+        if !docked() {
+            return Output::Handheld;
         }
-        height
+
+        let (requested, required_heap) =
+            if std::env::var("NX_4K").is_ok_and(|v| v == "1") {
+                (Output::Uhd, UHD_HEAP)
+            } else if std::env::var("NX_1440P").is_ok_and(|v| v == "1") {
+                (Output::Qhd, QHD_HEAP)
+            } else {
+                return Output::Full;
+            };
+
+        let heap = crate::kernel::aspace()
+            .layout
+            .heap_size
+            .min(crate::gfx::max_buffer_len());
+
+        if heap >= required_heap {
+            requested
+        } else {
+            eprintln!(
+                "[vi] {:?} output needs a {required_heap:#x}-byte guest heap the GPU can map, this Mac allows {heap:#x}; staying at 1080p",
+                requested
+            );
+            Output::Full
+        }
     });
-    if docked() { *H } else { 720 }
+
+    *O
 }
 
 pub fn resolution() -> (u32, u32) {
-    let h = docked_height();
-    (h * 16 / 9, h)
+    match output() {
+        Output::Uhd => (3840, 2160),
+        Output::Qhd => (2560, 1440),
+        Output::Full => (1920, 1080),
+        Output::Handheld => (1280, 720),
+    }
+}
+
+// Compatibility with code that uses the previous height-based API.
+pub fn docked_height() -> u32 {
+    resolution().1
 }
 
 const DISPLAY_ID: u64 = 0;

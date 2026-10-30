@@ -143,6 +143,7 @@ final class Settings: ObservableObject {
     @Published var handheld = false
     @Published var uhd = false
     @Published var qhd = false
+    @Published var dynamicResolution = true
     @Published var split60 = true
     @Published var interpolate = false
     @Published var metalHUD = false
@@ -152,7 +153,11 @@ final class Settings: ObservableObject {
     @Published var fillScreen = true
     @Published var hudAtEdges = true
     @Published var hudScale = 1.0
+    @Published var anisotropy = 0
+    @Published var lodBias = 0.0
+    @Published var textureFilter = "game"
     @Published var disabledMods: [String] = []
+    @Published var modOrder: [String] = []
     private var autosave: AnyCancellable?
 
     init() {
@@ -182,6 +187,7 @@ final class Settings: ObservableObject {
         handheld = j["handheld"] as? Bool ?? false
         uhd = j["uhd"] as? Bool ?? false
         qhd = j["qhd"] as? Bool ?? false
+        dynamicResolution = j["dynamic_resolution"] as? Bool ?? true
         split60 = j["split60"] as? Bool ?? true
         interpolate = j["frame_interpolation"] as? Bool ?? false
         metalHUD = j["metal_hud"] as? Bool ?? false
@@ -191,12 +197,28 @@ final class Settings: ObservableObject {
         fillScreen = j["aspect"] as? String != "16:9"
         hudAtEdges = j["hud"] as? String != "center"
         hudScale = j["hud_scale"] as? Double ?? 1.0
+        anisotropy = j["anisotropy"] as? Int ?? 0
+        lodBias = j["lod_bias"] as? Double ?? 0.0
+        textureFilter = j["texture_filter"] as? String ?? (j["trilinear"] as? Bool == true ? "trilinear" : "game")
         disabledMods = j["disabled_mods"] as? [String] ?? []
+        modOrder = j["mod_order"] as? [String] ?? []
     }
 
     var folderURL: URL { URL(fileURLWithPath: folder) }
 
-    var enabledMods: [Mod] { installedMods(in: folderURL).filter { !disabledMods.contains($0.name) } }
+    var mods: [Mod] {
+        let all = installedMods(in: folderURL)
+        let order = modOrder
+        let rank = { (m: Mod) in order.firstIndex(of: m.name) ?? Int.max }
+        return all.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+    }
+    var enabledMods: [Mod] { mods.filter { !disabledMods.contains($0.name) } }
+
+    func moveMods(from source: IndexSet, to destination: Int) {
+        var names = mods.map(\.name)
+        names.move(fromOffsets: source, toOffset: destination)
+        modOrder = names
+    }
 
     var codePatches: [String] { enabledMods.flatMap(\.patches) }
 
@@ -205,11 +227,12 @@ final class Settings: ObservableObject {
             "folder": folder, "keys": keys, "base": base, "update": update, "dlc": dlc, "network": network,
             "lan_interface": lanInterface, "lanplay_server": lanPlayServer, "pipeline_archive": pipelineArchive,
             "prewarm_pipelines": prewarm, "rumble": rumble, "rumble_min": rumbleMin, "gamepad_driver": padDriver, "spatial_audio": spatial, "background_compile": backgroundCompile, "motion_controls": motion,
-            "handheld": handheld, "uhd": uhd, "qhd": qhd, "split60": split60, "phone_pads": phonePads, "browser_pads": browserPads,
+            "handheld": handheld, "uhd": uhd, "qhd": qhd, "dynamic_resolution": dynamicResolution, "split60": split60, "phone_pads": phonePads, "browser_pads": browserPads,
             "frame_interpolation": interpolate, "metal_hud": metalHUD, "supersample": supersample, "full_res_3d": fullRes,
             "hq_shadows": hqShadows,
             "aspect": fillScreen ? "fill" : "16:9", "hud": hudAtEdges ? "edges" : "center", "hud_scale": hudScale,
-            "disabled_mods": disabledMods,
+            "anisotropy": anisotropy, "lod_bias": lodBias, "texture_filter": textureFilter,
+            "disabled_mods": disabledMods, "mod_order": modOrder,
         ]
         try? FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
         if let data = try? JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys]) {
@@ -240,6 +263,7 @@ final class Settings: ObservableObject {
         env["NX_PHONE_PADS"] = phonePads ? "1" : "0"
         if phonePads && browserPads { env["NX_BROWSER_PADS"] = "1" }
         if handheld { env["NX_HANDHELD"] = "1" } else if uhd { env["NX_4K"] = "1" } else if qhd { env["NX_1440P"] = "1" }
+        if !dynamicResolution { env["NX_DYNRES"] = "0" }
         if split60 { env["NX_SPLIT60"] = "1" }
         if canInterpolate && interpolate { env["NX_METALFX"] = "1" }
         if metalHUD { env["MTL_HUD_ENABLED"] = "1" }
@@ -249,6 +273,9 @@ final class Settings: ObservableObject {
         if fillScreen { env["NX_ASPECT"] = "auto" }
         if !hudAtEdges { env["NX_HUD"] = "center" }
         if hudScale != 1 { env["NX_HUD_SCALE"] = String(hudScale) }
+        if anisotropy > 1 { env["NX_ANISO"] = String(anisotropy) }
+        if lodBias != 0 { env["NX_LOD_BIAS"] = String(lodBias) }
+        if textureFilter != "game" { env["NX_TEXTURE_FILTER"] = textureFilter }
         return env
     }
 
@@ -273,7 +300,7 @@ func checks(_ s: Settings) -> [Check] {
     let has = { (p: String) in fm.fileExists(atPath: f.appendingPathComponent(p).path) }
     let shaderIndex = f.appendingPathComponent("work/shader_cache.noindex/heap-segments-v2/index.tsv").path
     let shaders = (try? fm.attributesOfItem(atPath: shaderIndex)[.size] as? Int) ?? nil
-    let mods = installedMods(in: f)
+    let mods = s.mods
     let on = mods.filter { !s.disabledMods.contains($0.name) }.count
     return [
         Check(id: "Base Game", ok: has(s.base), detail: has(s.base) ? s.base : "not found"),
@@ -579,6 +606,27 @@ struct LauncherView: View {
                 Text("Docked (4K)").tag(1)
                 Text("Handheld (720p)").tag(2)
             }
+            Toggle(isOn: $s.dynamicResolution) {
+                labeled("Dynamic resolution", "The game lowers its resolution in races when the GPU is busy. Turn it off to always render at full size (update 4.0.1 only)")
+            }
+            Picker(selection: $s.anisotropy) {
+                Text("Game default").tag(0)
+                ForEach([2, 4, 8, 16], id: \.self) { n in Text("\(n)x").tag(n) }
+            } label: {
+                labeled("Anisotropic filtering", "Keeps textures sharp on surfaces seen at an angle, such as the road ahead")
+            }
+            Picker(selection: $s.textureFilter) {
+                Text("Game default").tag("game")
+                Text("Bilinear").tag("bilinear")
+                Text("Trilinear").tag("trilinear")
+            } label: {
+                labeled("Texture filtering", "Trilinear blends between texture detail levels. Bilinear switches between them, a little faster but with visible lines")
+            }
+            HStack {
+                labeled("Texture LOD bias", "Below 0 shows sharper textures in the distance, above 0 blurs them")
+                Slider(value: $s.lodBias, in: -2...2, step: 0.25)
+                Text(s.lodBias == 0 ? "0" : String(format: "%+.2f", s.lodBias)).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+            }
             Toggle(isOn: $s.supersample) { labeled("Supersampling", "When the console mode is bigger than the screen (4K on a 1440p display), the image is filtered down to the screen for smooth edges") }
             Toggle(isOn: $s.fullRes) { labeled("Full resolution 3D", "The game draws its 3D scene at 75% of the console mode and scales it up. This draws it at 100%") }
             Toggle(isOn: $s.hqShadows) { labeled("High quality shadows", "Shadow maps at twice the size (2048 or 3072 instead of 1024 or 1536): sharper shadow edges") }
@@ -719,29 +767,33 @@ struct ModsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let mods = installedMods(in: s.folderURL)
-        VStack(spacing: 12) {
-            Form {
-                Section {
-                    ForEach(mods) { m in
-                        Toggle(isOn: Binding(get: { !s.disabledMods.contains(m.name) }, set: { on in
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Mods").font(.headline)
+            List {
+                ForEach(s.mods) { m in
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(m.name)
+                            Text(m.summary).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { !s.disabledMods.contains(m.name) }, set: { on in
                             s.disabledMods.removeAll { $0 == m.name }
                             if !on { s.disabledMods.append(m.name) }
-                        })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.name)
-                                Text(m.summary).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
+                        }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                     }
-                } header: {
-                    Text("Mods")
-                } footer: {
-                    Text("Mods apply from top to bottom, so a lower mod wins when two mods change the same file. Code patches apply the next time you Prepare.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    .frame(height: 40)
                 }
+                .onMove { from, to in withAnimation { s.moveMods(from: from, to: to) } }
             }
-            .formStyle(.grouped)
+            .environment(\.defaultMinListRowHeight, 48)
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+            Text("Drag a mod to change the order. Mods apply from top to bottom, so a lower mod wins when two mods change the same file. Code patches apply the next time you Prepare.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Show in Finder") { NSWorkspace.shared.open(s.folderURL.appendingPathComponent("mods")) }
                 Spacer()
